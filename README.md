@@ -16,7 +16,7 @@ Think of it like building with digital LEGOs, but these LEGOs crunch numbers sup
 
 TCSCL programs live in plain text files, and we like to give them the `.tcscl` extension just to keep things tidy. Inside, the structure is usually organized into a few key sections, marked by helpful comments (`//` starts a comment, ignored by the machine!).
 
-Here's the typical layout, just like the example you showed:
+Here's the typical layout:
 
 ```tcscl
 // CONSTANTS (Optional, but super helpful!)
