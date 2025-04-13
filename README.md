@@ -305,7 +305,7 @@ Pretty neat, huh?
 
 ---
 
-##💡 Tips for Happy TCSCL Coding! 💡
+## 💡 Tips for Happy TCSCL Coding! 💡
 
 *   **Use Constants!** Define names for registers, function IDs, list IDs, and even magic numbers using `const int NAME = value;`. It makes your code *so* much easier to read and modify.
 *   **Comment Generously:** Use `//` to explain *why* you are doing something, not just *what* the instruction does (the opcode name often tells you that). Explain your logic!
