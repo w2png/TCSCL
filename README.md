@@ -6,289 +6,336 @@
 - **Modular Compiler**: Easily extendable with new instructions for future growth.
 
 ---
+Okay, adventurers! Get ready to dive into the wonderful world of **TCSCL (Turing Complete Systems for Compute Language)**, your friendly neighborhood language for programming a virtual machine that runs right on your powerful GPU! 🎉
 
-## How to Program in TCSCL (Turing Complete Systems for Compute Language) v1.3
+Think of it like building with digital LEGOs, but these LEGOs crunch numbers super fast using your graphics card. TCSCL (we're talking version **pre-1.3.5** here) lets you write low-level instructions to control this virtual machine. It's powerful, a bit quirky, and a whole lot of fun once you get the hang of it!
 
-### Introduction
+---
 
-Welcome to TCSCL! Think of TCSCL as a specialized language designed to directly instruct a Graphics Processing Unit (GPU) to perform calculations, especially repetitive ones, very quickly. It's like a custom assembly language for a virtual machine that runs on your GPU.
+## 🚀 Getting Started: Your First `.tcscl` File!
 
-The C++ code you have is the **compiler and runtime** for TCSCL. You write your instructions in a `.tcscl` file, and this C++ program takes that file, prepares it, sends it to the GPU, executes it, and retrieves the results.
+TCSCL programs live in plain text files, and we like to give them the `.tcscl` extension just to keep things tidy. Inside, the structure is usually organized into a few key sections, marked by helpful comments (`//` starts a comment, ignored by the machine!).
 
-This guide will explain how to write the code that goes *inside* the `.tcscl` file.
-
-### Core Concepts
-
-1.  **Registers:**
-    *   Imagine the GPU has a large set of temporary storage slots called **registers**. In TCSCL, there are 4096 registers, numbered 0 to 4095.
-    *   Each register can hold *either* an integer (whole number) *or* a floating-point number (a number with a decimal point). The system uses the same memory space for both, so how you use it (e.g., with `OP_ADD_INT` vs `OP_ADD_FLOAT`) determines how the bits are interpreted.
-    *   You'll use registers constantly to store values, perform calculations, and pass data between instructions. We often refer to them like `R0`, `R1`, `R6`, etc., corresponding to register indices 0, 1, 6.
-
-2.  **Instructions (Opcodes):**
-    *   Instructions are the commands you give to the virtual machine. Each instruction has a name (like `OP_LOAD_INT`, `OP_ADD_FLOAT`, `OP_HALT`) called an **opcode**.
-    *   Most instructions are followed by **arguments**, which are the data the instruction needs to work with. Arguments are separated by commas. These can be register numbers, immediate (literal) values, or special IDs (like function IDs, label IDs, or list IDs).
-
-3.  **Data Types:**
-    *   **Integer (`int`):** Whole numbers (e.g., 5, -10, 0). Used with `_INT` instructions.
-    *   **Floating-Point (`float`):** Numbers with decimal points (e.g., 3.14, -0.5, 8.0). Used with `_FLOAT` instructions.
-    *   **`float_as_int()`:** Because the program code itself is stored as integers, you *cannot* directly write `3.14f` in your `.tcscl` code. Instead, when you need to load a literal float value, you use the special notation `float_as_int(value)` in the C++ vector that defines your program (or conceptually, when writing your code). The C++ compiler translates this into the correct integer bit pattern representing that float. For example, to load 3.14 into Register 6, you'd conceptually write: `OP_LOAD_FLOAT, 6, float_as_int(3.14f)`.
-
-4.  **Program Flow:**
-    *   By default, instructions execute one after another, top to bottom.
-    *   You can change this flow using **jump** instructions (`OP_JUMP`, `OP_JUMP_IF_ZERO`), **call** instructions (`OP_CALL`, `OP_RET`), and **conditional** blocks (`OP_IF`, `OP_ELSE`, `OP_ENDIF`).
-
-### Structure of a `.tcscl` File
-
-Your actual TCSCL code isn't written directly *in* the C++ file (except for the example). You would typically create a text file (e.g., `my_program.tcscl`) and then modify the C++ host code to load and parse *that* file into the `host_program_source` vector.
-
-However, based on the example structure provided in the prompt, a `.tcscl` file conventionally looks like this:
-
-1.  **Constants (Optional, C++ side):**
-    *   You can define constants in C++ (like `const int DEF_SE_LOSS = 1;`) to give meaningful names to numbers (like function IDs). This makes your TCSCL code easier to read.
-
-2.  **Comments:**
-    *   Lines starting with `//` are comments. They are ignored by the compiler and are used to explain the code.
-
-3.  **Program Details Block (Convention):**
-    *   Often starts with `// Program Details [` and ends with `// ] End Program Details`.
-    *   Used for high-level comments about the program, like conventions used (e.g., the `FLOAT_ID_THRESHOLD`).
-
-4.  **Cache Block (Convention, "Initialization"):**
-    *   Often starts with `// Cache [` and ends with `// ] End Cache`.
-    *   **Important:** This isn't a special hardware cache. It's just a conventional place at the *beginning* of the instruction list where you often put `OP_LOAD_INT` or `OP_LOAD_FLOAT` instructions to initialize registers with default values (like 0 or 0.0f) before the main logic starts. It's just regular TCSCL code.
-
-5.  **Program Block (Main Execution):**
-    *   Often starts with `// Program [` and ends with `// ] End Program`.
-    *   This is the main part of your program that runs first on the GPU (in a single thread).
-    *   It *must* eventually end with an `OP_HALT` instruction to signal the end of the main execution phase.
-
-6.  **Function Definitions Block:**
-    *   Often starts with `// Function Definitions [` and ends with `// ] End Function Definitions`.
-    *   This is where you define reusable blocks of code called functions.
-    *   Each function starts with `OP_FUNC_DEF, function_id` and ends with `OP_RET`.
-    *   Functions defined here can be called from the main `Program` block or even from other functions using `OP_CALL`.
-    *   **Crucially:** After the main `Program` block hits `OP_HALT`, *all* functions defined here are automatically scheduled to run **in parallel**, each function instance potentially running on a different GPU core.
-
-### Core Instruction Overview
-
-Here's a breakdown of the available instructions (opcodes) by category:
-
-**Data Movement**
-
-*   `OP_LOAD_INT, dest_reg, integer_value`
-    *   Loads an immediate integer value into a register.
-    *   Example: `OP_LOAD_INT, 1, 100` (Put 100 into R1)
-*   `OP_LOAD_FLOAT, dest_reg, float_as_int(float_value)`
-    *   Loads an immediate float value into a register (remember `float_as_int`).
-    *   Example: `OP_LOAD_FLOAT, 6, float_as_int(9.81f)` (Put 9.81 into R6)
-*   `OP_MOV, dest_reg, source_reg`
-    *   Copies the value (bits) from `source_reg` to `dest_reg`.
-    *   Example: `OP_MOV, 2, 1` (Copy value from R1 into R2)
-*   `OP_POP_REG, reg_id`
-    *   Sets the specified register `reg_id` to 0 (integer zero). Useful for clearing.
-    *   Example: `OP_POP_REG, 5` (Set R5 to 0)
-*   `OP_ROUND, destIntReg, srcFloatReg`
-    *   Sets the specified register `srcFloatReg` to be rounded. Useful for List-Loading in Integers.
-    *   Example: `OP_ROUND, 1, 9` (Round R9 and save to R1)
-
-**Arithmetic**
-
-*   `OP_ADD_INT, dest_reg, src_reg1, src_reg2` (Integer Addition: R_dest = R_src1 + R_src2)
-*   `OP_SUB_INT, dest_reg, src_reg1, src_reg2` (Integer Subtraction: R_dest = R_src1 - R_src2)
-*   `OP_MUL_INT, dest_reg, src_reg1, src_reg2` (Integer Multiplication: R_dest = R_src1 * R_src2)
-*   `OP_DIV_INT, dest_reg, src_reg1, src_reg2` (Integer Division: R_dest = R_src1 / R_src2, Result is 0 if R_src2 is 0)
-*   `OP_ADD_FLOAT, dest_reg, src_reg1, src_reg2` (Float Addition)
-*   `OP_SUB_FLOAT, dest_reg, src_reg1, src_reg2` (Float Subtraction)
-*   `OP_MUL_FLOAT, dest_reg, src_reg1, src_reg2` (Float Multiplication)
-*   `OP_DIV_FLOAT, dest_reg, src_reg1, src_reg2` (Float Division, Result is undefined/NaN/Inf if R_src2 is 0.0)
-    *   Example: `OP_ADD_FLOAT, 8, 6, 7` (R8 = R6 + R7, treating values as floats)
-
-**Logical & Bitwise**
-
-*   `OP_AND, dest_reg, src_reg1, src_reg2` (Logical AND: R_dest = (R_src1 != 0) && (R_src2 != 0) ? 1 : 0)
-*   `OP_OR, dest_reg, src_reg1, src_reg2` (Logical OR: R_dest = (R_src1 != 0) || (R_src2 != 0) ? 1 : 0)
-*   `OP_NOT, dest_reg, source_reg` (Logical NOT: R_dest = (R_source == 0) ? 1 : 0)
-*   `OP_XOR, dest_reg, src_reg1, src_reg2` (Bitwise XOR: R_dest = R_src1 ^ R_src2, integer bits are XORed)
-    *   Example: `OP_AND, 3, 1, 2` (If R1 and R2 are both non-zero, set R3 to 1, else set R3 to 0)
-
-**Control Flow**
-
-*   `OP_LABEL, label_id`
-    *   Defines a named location in the code. `label_id` is an integer you choose. This instruction itself does nothing during execution but marks a spot.
-    *   Example: `OP_LABEL, 10` (Marks this spot as Label 10)
-*   `OP_JUMP, label_id`
-    *   Unconditionally jumps execution to the instruction immediately *after* the `OP_LABEL` with the matching `label_id`.
-    *   Example: `OP_JUMP, 10` (Execution continues after `OP_LABEL, 10`)
-*   `OP_JUMP_IF_ZERO, condition_reg, label_id`
-    *   Jumps to the instruction after `OP_LABEL, label_id` *only if* the integer value in `condition_reg` is exactly 0. Otherwise, continues to the next instruction.
-    *   Example: `OP_JUMP_IF_ZERO, 3, 10` (If R3 contains 0, jump to Label 10)
-*   `OP_FUNC_DEF, function_id`
-    *   Defines the start of a function block. `function_id` is an integer you choose (often using a C++ `const int`). Execution doesn't start here unless called or run in parallel.
-    *   Example: `OP_FUNC_DEF, 1` (Starts the definition of Function 1)
-*   `OP_CALL, function_id`
-    *   Pauses execution at the current point, jumps to the start of the function defined with `OP_FUNC_DEF, function_id`, executes that function until `OP_RET`, and then returns to the instruction *after* the `OP_CALL`. Uses a stack to handle nested calls.
-    *   Example: `OP_CALL, 1` (Execute Function 1, then come back here)
-*   `OP_RET`
-    *   Marks the end of a function's execution. Returns control to wherever the function was called from (using `OP_CALL`). If executed outside a function called via `OP_CALL` (e.g., during parallel execution), it terminates that specific execution thread.
-*   `OP_IF, condition_reg`
-    *   Starts a conditional block. If the integer value in `condition_reg` is *not* 0 (i.e., true), the instructions between `OP_IF` and the next `OP_ELSE` or `OP_ENDIF` are executed. Otherwise, they are skipped.
-*   `OP_ELSE`
-    *   Used within an `OP_IF`/`OP_ENDIF` block. If the original `OP_IF` condition was false (0), the instructions between `OP_ELSE` and `OP_ENDIF` are executed.
-*   `OP_ENDIF`
-    *   Marks the end of an `OP_IF` or `OP_IF`/`OP_ELSE` block. Execution continues normally after this point.
-    *   Example:
-        ```tcscl
-        OP_LOAD_INT, 1, 5
-        OP_LOAD_INT, 2, 0
-        OP_IF, 1             // R1 is 5 (not 0), so execute this block
-        OP_OUTPUT_INT, 1, 1  // This will run
-        OP_ELSE              // Skip this block
-        OP_OUTPUT_INT, 2, 2  // This will NOT run
-        OP_ENDIF             // End of conditional
-        OP_OUTPUT_INT, 1, 3  // This runs regardless
-        ```
-*   `OP_HALT`
-    *   Stops the execution of the *main program thread*. This is essential. After `OP_HALT`, the parallel function execution phase begins (if functions are defined). In a parallel function thread, `OP_HALT` stops just that thread.
-*   `OP_NOP`
-    *   No Operation. Does nothing, just takes up a cycle and moves to the next instruction. Sometimes useful for debugging or padding.
-
-**Comparison**
-
-These instructions compare two registers and store the result (1 for true, 0 for false) as an integer in the destination register.
-
-*   `OP_EQ_INT, dest_reg, src_reg1, src_reg2` (Equal Int: R_dest = (R_src1 == R_src2) ? 1 : 0)
-*   `OP_NEQ_INT, dest_reg, src_reg1, src_reg2` (Not Equal Int)
-*   `OP_GT_INT, dest_reg, src_reg1, src_reg2` (Greater Than Int)
-*   `OP_LT_INT, dest_reg, src_reg1, src_reg2` (Less Than Int)
-*   `OP_GTE_INT, dest_reg, src_reg1, src_reg2` (Greater Than or Equal Int)
-*   `OP_LTE_INT, dest_reg, src_reg1, src_reg2` (Less Than or Equal Int)
-*   `OP_EQ_FLOAT, dest_reg, src_reg1, src_reg2` (Equal Float)
-*   `OP_NEQ_FLOAT, dest_reg, src_reg1, src_reg2` (Not Equal Float)
-*   `OP_GT_FLOAT, dest_reg, src_reg1, src_reg2` (Greater Than Float)
-*   `OP_LT_FLOAT, dest_reg, src_reg1, src_reg2` (Less Than Float)
-*   `OP_GTE_FLOAT, dest_reg, src_reg1, src_reg2` (Greater Than or Equal Float)
-*   `OP_LTE_FLOAT, dest_reg, src_reg1, src_reg2` (Less Than or Equal Float)
-    *   Example: `OP_GT_FLOAT, 3, 6, 7` (Set R3 to 1 if R6 > R7, else set R3 to 0, comparing as floats)
-
-**Output**
-
-*   `OP_OUTPUT_INT, source_reg, output_id`
-    *   Sends the integer value from `source_reg` to the host (CPU) associated with the integer `output_id`.
-*   `OP_OUTPUT_FLOAT, source_reg, output_id`
-    *   Sends the float value from `source_reg` to the host associated with the integer `output_id`.
-    *   **Convention:** The C++ host code example uses a threshold (e.g., `output_id >= 10000`) to distinguish float outputs from integer outputs when writing the final `gpuOut.bin` file. You should follow the convention set in the host code.
-    *   Example: `OP_OUTPUT_FLOAT, 8, 10001` (Output the float value in R8 with ID 10001)
-
-**List Operations (for dynamic arrays of floats)**
-
-These operate on dynamic lists stored on the GPU. Each list has an ID (0 to MAX_LISTS-1).
-
-*   `OP_FLOAT_LIST, list_id`
-    *   Declares that a specific `list_id` is intended to be used. Needs to be called before using the list ID with other list operations (unless loaded with `OP_LOAD_LNST`).
-    *   Example: `OP_FLOAT_LIST, 0` (Declare list 0 as usable)
-*   `OP_ADD_LIST_ITEM, list_id, value_reg`
-    *   Appends the float value currently in `value_reg` to the end of the list specified by `list_id`. Handles resizing automatically (up to `MAX_LIST_SIZE`).
-    *   Example: `OP_ADD_LIST_ITEM, 0, 6` (Add the float from R6 to the end of list 0)
-*   `OP_READ_LIST_ITEM, dest_reg, list_id, index_reg`
-    *   Reads the float item from the list `list_id` at the position specified by the *integer* value in `index_reg`. Stores the float value in `dest_reg`. If the index is invalid (out of bounds), `dest_reg` is set to 0.0f.
-    *   Example: `OP_LOAD_INT, 1, 5` (Put index 5 into R1) -> `OP_READ_LIST_ITEM, 7, 0, 1` (Read item at index 5 from list 0 into R7)
-*   `OP_REMOVE_LIST_ITEM, list_id, index_reg`
-    *   Removes the item from list `list_id` at the position specified by the *integer* value in `index_reg`. It does this efficiently by swapping the last item into the removed item's slot and reducing the list size. Order is not preserved. Does nothing if the index is invalid.
-    *   Example: `OP_LOAD_INT, 1, 2` (Put index 2 into R1) -> `OP_REMOVE_LIST_ITEM, 0, 1` (Remove item at index 2 from list 0)
-*   `OP_EDIT_LIST_ITEM, list_id, index_reg, value_reg`
-    *   Overwrites the float item in list `list_id` at the position specified by the *integer* value in `index_reg` with the float value currently in `value_reg`. Does nothing if the index is invalid.
-    *   Example: `OP_LOAD_INT, 1, 0` (Put index 0 into R1) -> `OP_LOAD_FLOAT, 9, float_as_int(99.9f)` (Put value 99.9 into R9) -> `OP_EDIT_LIST_ITEM, 0, 1, 9` (Set item at index 0 in list 0 to the value from R9)
-*   `OP_OUTPUT_LIST, list_id, user_output_id`
-    *   Sends a special marker pair to the host output. The host C++ code interprets this marker pair, reads the entire content of the specified `list_id` from GPU memory, formats it as a string (e.g., `[1.0, 2.5, 3.0]`), and associates it with the `user_output_id` in the final `gpuOut.bin` file.
-    *   Example: `OP_OUTPUT_LIST, 0, 20001` (Tell the host to read list 0 and output it with ID 20001)
-
-**Input Loading (List Data)**
-
-*   `OP_LOAD_LNST, load_id, dest_list_id`
-    *   **Host-Side Operation:** This instruction tells the *host C++ code* (before the GPU kernel starts) to look inside the `gpuIn.bin` file for an entry matching `load_id`. If found, the host reads the list of floats associated with that `load_id` and copies it directly into the GPU memory allocated for the list identified by `dest_list_id`. It also marks `dest_list_id` as existing and sets its size.
-    *   **GPU-Side Operation:** On the GPU itself, this instruction acts like a `NOP` (it does nothing and just advances the program counter). The actual data loading happened before the GPU code started running.
-    *   **`gpuIn.bin` Format:** A text file where each line defines a list: `load_id: [float1, float2, float3, ...]` (e.g., `10: [1.2, 3.4, -5.6]`). Comments start with `#`.
-    *   Example: `OP_LOAD_LNST, 10, 1` (Before GPU execution, the host looks for ID 10 in `gpuIn.bin` and loads its data into GPU list 1).
-
-**Random Numbers**
-
-*   `OP_RAND_M, dest_reg_float`
-    *   Generates a pseudo-random floating-point number between 0.0 and 1.0 (inclusive) and stores it in `dest_reg_float`. Each execution thread (main or parallel function) has its own independent random number sequence.
-    *   Example: `OP_RAND_M, 10` (Put a random float between 0.0 and 1.0 into R10)
-
-### Execution Model: Main vs. Parallel Functions
-
-1.  **Main Program Execution:**
-    *   The code in the `// Program [...]` block runs first.
-    *   It runs on a *single* GPU thread/core.
-    *   It continues until it hits `OP_HALT`.
-
-2.  **Parallel Function Execution:**
-    *   *After* the main program hits `OP_HALT`, the system looks at all functions defined using `OP_FUNC_DEF`.
-    *   It launches *each defined function* as a separate, parallel task. If you defined 5 functions, it attempts to run 5 function instances simultaneously on different GPU cores (hardware permitting).
-    *   These functions operate on the *final state* of the registers left by the main program.
-    *   They also operate on the *shared* list data.
-    *   **Concurrency Warning:** Because registers and lists are shared, if multiple parallel functions try to write to the *same* register or modify the *same* list concurrently without careful coordination, you can get **race conditions** (unpredictable results depending on which thread finishes writing last). List operations like `ADD` and `REMOVE` use atomic operations internally for basic safety (preventing two threads from getting the same index), but complex interactions or edits to the *same* item can still be problematic. Reads from registers/lists are generally safer but might read stale data if another thread modifies it concurrently. Design parallel functions to work on independent data as much as possible.
-
-### Example Walkthrough (`DEF_SE_LOSS` function)
-
-Let's break down the example from the prompt:
+Here's the typical layout, just like the example you showed:
 
 ```tcscl
-// Define a constant for the function ID (done in C++)
-const int DEF_SE_LOSS = 1;
+// CONSTANTS (Optional, but super helpful!)
+// Define friendly names for numbers (like register IDs or function IDs) here.
+const int MY_COOL_REGISTER = 0;
+const int MY_AWESOME_FUNCTION = 10;
+// ] // Marks the end of this section (just for human eyes!)
 
-// Program Details [...] (Comments)
+// REGISTERS [ (Optional, but good for setting initial values)
+// Here you can pre-load registers with starting values before the main program runs.
+// It's like setting up your tools before you start building!
+// Use OP_LOAD_INT or OP_LOAD_FLOAT.
+OP_LOAD_FLOAT, MY_COOL_REGISTER, float_as_int(3.14159f), // Put Pi in register 0
+// ]
 
-// Cache [...] ("Initialization")
-OP_LOAD_INT, 1, 0,      // R1 = 0 (integer)
-OP_LOAD_INT, 2, 0,      // R2 = 0
-// ... other initializations ...
-OP_LOAD_FLOAT, 6, float_as_int(0.0f), // R6 = 0.0 (float)
-OP_LOAD_FLOAT, 7, float_as_int(0.0f), // R7 = 0.0
-OP_LOAD_FLOAT, 8, float_as_int(0.0f), // R8 = 0.0
-OP_LOAD_FLOAT, 9, float_as_int(0.0f), // R9 = 0.0
-OP_LOAD_FLOAT, 10, float_as_int(0.0f),// R10 = 0.0
-// ] End Cache
+// PROGRAM
+// This is the MAIN part of your code! Execution starts here.
+// Put your sequence of instructions (opcodes and their arguments) here.
+OP_CALL, MY_AWESOME_FUNCTION, // Example: Call a function
+OP_OUTPUT_FLOAT, MY_COOL_REGISTER, 10000, // Output the value in register 0 with ID 10000
+OP_HALT, // VERY important! Tells the machine to stop.
+// ]
 
-// Program [...] (Main execution block)
-OP_LOAD_FLOAT, 6, float_as_int(8.5f),  // Load 'true value' 8.5 into R6
-OP_LOAD_FLOAT, 7, float_as_int(7.341f), // Load 'predicted value' 7.341 into R7
-OP_CALL, DEF_SE_LOSS,                 // Call function with ID 1 (DEF_SE_LOSS)
-                                      // Execution jumps to the function, R6 and R7 hold inputs
-                                      // ... function executes ...
-                                      // Function returns, R8 now holds the result
-OP_OUTPUT_FLOAT, 8, 10001,            // Output the result in R8 with float ID 10001
-
-OP_HALT,                              // End main program execution. Now parallel functions run.
-// ] End Program
-
-// Function Definitions [...]
-OP_FUNC_DEF, DEF_SE_LOSS,             // Define function 1. Comment says: Args R6, R7, Result R8
-OP_SUB_FLOAT, 9, 6, 7,                // R9 = R6 - R7 (Calculate the difference)
-OP_MUL_FLOAT, 8, 9, 9,                // R8 = R9 * R9 (Square the difference -> Squared Error)
-OP_RET,                               // Return from function. Execution goes back after OP_CALL
-// ] End Function Definitions
+// FUNCTION DEFINITIONS (Optional)
+// Define reusable blocks of code (functions) here.
+// They only run when you explicitly CALL them.
+OP_FUNC_DEF, MY_AWESOME_FUNCTION, // Start defining function 10
+  OP_ADD_FLOAT, MY_COOL_REGISTER, MY_COOL_REGISTER, MY_COOL_REGISTER, // Add register 0 to itself
+OP_RET, // Return from the function back to where it was called
+// ]
 ```
 
-**Execution Flow:**
+See? Not too scary! The `// ]` markers aren't strictly needed by the machine, but they help *us* humans see where one section ends and another begins.
 
-1.  Registers R1-R10 are initialized (mostly to 0 or 0.0f).
-2.  R6 is set to 8.5f.
-3.  R7 is set to 7.341f.
-4.  `OP_CALL, 1` is executed. The program jumps to `OP_FUNC_DEF, 1`.
-5.  Inside the function: `OP_SUB_FLOAT` calculates `8.5 - 7.341` and stores it in R9.
-6.  `OP_MUL_FLOAT` calculates `R9 * R9` (the squared error) and stores it in R8.
-7.  `OP_RET` is executed. The program returns to the instruction after `OP_CALL`.
-8.  `OP_OUTPUT_FLOAT` sends the value now in R8 (the calculated squared error) to the host with ID 10001.
-9.  `OP_HALT` is executed. The main program stops.
-10. The system sees `OP_FUNC_DEF, 1` exists. It launches function 1 again, in parallel (though in this simple case, it just runs again, recalculating the same result based on the final values in R6/R7, likely writing to R8/R9 again, and potentially outputting again if the function included output instructions). If other functions were defined, they would also run in parallel now.
+---
 
-### Tips for Beginners
+## 🛠️ The Core Building Blocks
 
-*   **Start Simple:** Write small programs first to understand individual instructions.
-*   **Comment Your Code:** Explain *why* you are doing something, not just *what* the instruction does. Note register usage (e.g., `// R6: input value, R7: weight`).
-*   **Initialize Registers:** Use the "Cache" section convention to set registers to known default values.
+TCSCL operates on a few fundamental concepts:
+
+1.  **Registers:** Think of these as small, super-fast storage slots right inside the virtual machine's "brain". TCSCL gives you a bunch of them (specifically `4096` in this version!). Each register can hold *either* an integer (whole number) or a floating-point number (decimal number). You refer to registers by their number (0 to 4095) or, even better, by the friendly names you define in the `// CONSTANTS` section!
+2.  **Opcodes:** These are the action words! They tell the virtual machine *what* to do. Examples: `OP_ADD_INT`, `OP_LOAD_FLOAT`, `OP_JUMP`, `OP_HALT`. Each opcode has a unique number assigned to it (like `OP_HALT` is 0, `OP_LOAD_INT` is 2, etc.).
+3.  **Operands/Arguments:** Most opcodes need extra information to work – these are the operands or arguments. They follow the opcode directly. For example, `OP_LOAD_INT, 5, 100` means: use the `OP_LOAD_INT` command (opcode 2), target register `5` (operand 1), and load the value `100` (operand 2).
+4.  **Program Counter (PC):** This is like the machine's finger pointing at the current instruction it's about to execute in your `// PROGRAM` section. It usually moves forward one instruction at a time, but opcodes like `OP_JUMP` or `OP_CALL` can make it jump around!
+5.  **Lists:** TCSCL lets you work with dynamic lists of floating-point numbers! You can create them, add items, read items, change them, remove them, and even load them from a file or output them. Super handy for storing collections of data.
+
+---
+
+## ✨ The Mighty Instruction Set (Opcodes Explained!) ✨
+
+Here's a cheerful tour of the commands (opcodes) available in TCSCL pre-1.3.5. Each instruction takes up a specific number of "slots" (integers) in the program memory.
+
+**System & Control Flow:**
+
+*   `OP_HALT` (1 slot)
+    *   **Action:** Stops the *entire* virtual machine execution immediately. Essential! Put it at the end of your main program sequence.
+*   `OP_NOP` (1 slot)
+    *   **Action:** No Operation. Does absolutely nothing! Sometimes useful as a placeholder.
+*   `OP_JUMP` (2 slots: `OP_JUMP, target_label_id`)
+    *   **Action:** Tells the PC to jump to a different part of the code marked by `OP_LABEL, target_label_id`. The host figures out the exact jump distance before sending the code to the GPU.
+*   `OP_JUMP_IF_ZERO` (3 slots: `OP_JUMP_IF_ZERO, condition_register, target_label_id`)
+    *   **Action:** Checks the integer value in `condition_register`. If it's exactly `0`, it jumps to the `target_label_id`. Otherwise, it continues to the next instruction. Great for conditional logic!
+*   `OP_CALL` (2 slots: `OP_CALL, function_id`)
+    *   **Action:** Jumps to the start of a function defined with `OP_FUNC_DEF, function_id`. It remembers where it came from so `OP_RET` can return!
+*   `OP_RET` (1 slot)
+    *   **Action:** Returns from the current function back to the instruction right after the `OP_CALL` that brought it there. Don't use this outside a function!
+*   `OP_FUNC_DEF` (2 slots: `OP_FUNC_DEF, function_id`)
+    *   **Action (Host):** Marks the beginning of a function definition during pre-processing.
+    *   **Action (GPU):** Does nothing (NOP). Execution skips over it unless `OP_CALL`ed. The `function_id` should be unique and between 0 and `MAX_FUNCTIONS - 1` (511).
+*   `OP_LABEL` (2 slots: `OP_LABEL, label_id`)
+    *   **Action (Host):** Marks a location in the code during pre-processing so `OP_JUMP` and `OP_JUMP_IF_ZERO` can find it.
+    *   **Action (GPU):** Does nothing (NOP). Execution skips over it.
+
+**Conditional Execution (IF/ELSE):**
+
+*   `OP_IF` (2 slots: `OP_IF, condition_register`)
+    *   **Action:** Checks the integer value in `condition_register`. If it's *not* zero (i.e., true), instructions between this `OP_IF` and the next `OP_ELSE` or `OP_ENDIF` are executed. If it *is* zero (false), they are skipped.
+*   `OP_ELSE` (1 slot)
+    *   **Action:** If the preceding `OP_IF` condition was false, instructions between this `OP_ELSE` and the `OP_ENDIF` are executed. If the `OP_IF` condition was true, these instructions are skipped.
+*   `OP_ENDIF` (1 slot)
+    *   **Action:** Marks the end of an `OP_IF` or `OP_IF`/`OP_ELSE` block. Execution continues normally after this point, regardless of the condition.
+
+**Data Movement & Loading:**
+
+*   `OP_LOAD_INT` (3 slots: `OP_LOAD_INT, dest_register, integer_value`)
+    *   **Action:** Loads the given `integer_value` directly into the `dest_register`.
+*   `OP_LOAD_FLOAT` (3 slots: `OP_LOAD_FLOAT, dest_register, float_value_as_int_bits`)
+    *   **Action:** Loads a floating-point number into `dest_register`. **Important:** You need to provide the *integer representation* of the float's bits! Use the magic `float_as_int(your_float_value)` in your `.tcscl` file setup (like in the example) or calculate it beforehand.
+    *   *Example:* `OP_LOAD_FLOAT, 0, float_as_int(1.23f)`
+*   `OP_MOV` (3 slots: `OP_MOV, dest_register, source_register`)
+    *   **Action:** Copies the *exact* value (int or float bits) from `source_register` to `dest_register`.
+
+**Integer Arithmetic:** (Operate on registers as integers)
+
+*   `OP_ADD_INT` (4 slots: `OP_ADD_INT, dest_reg, src1_reg, src2_reg`)
+    *   **Action:** `dest_reg = src1_reg + src2_reg`
+*   `OP_SUB_INT` (4 slots: `OP_SUB_INT, dest_reg, src1_reg, src2_reg`)
+    *   **Action:** `dest_reg = src1_reg - src2_reg`
+*   `OP_MUL_INT` (4 slots: `OP_MUL_INT, dest_reg, src1_reg, src2_reg`)
+    *   **Action:** `dest_reg = src1_reg * src2_reg`
+*   `OP_DIV_INT` (4 slots: `OP_DIV_INT, dest_reg, src1_reg, src2_reg`)
+    *   **Action:** `dest_reg = src1_reg / src2_reg`. Integer division (discards remainder). Protect against division by zero! (Result is 0 if `src2_reg` is 0).
+
+**Floating-Point Arithmetic:** (Operate on registers as floats)
+
+*   `OP_ADD_FLOAT` (4 slots: `OP_ADD_FLOAT, dest_reg, src1_reg, src2_reg`)
+    *   **Action:** `dest_reg = src1_reg + src2_reg`
+*   `OP_SUB_FLOAT` (4 slots: `OP_SUB_FLOAT, dest_reg, src1_reg, src2_reg`)
+    *   **Action:** `dest_reg = src1_reg - src2_reg`
+*   `OP_MUL_FLOAT` (4 slots: `OP_MUL_FLOAT, dest_reg, src1_reg, src2_reg`)
+    *   **Action:** `dest_reg = src1_reg * src2_reg`
+*   `OP_DIV_FLOAT` (4 slots: `OP_DIV_FLOAT, dest_reg, src1_reg, src2_reg`)
+    *   **Action:** `dest_reg = src1_reg / src2_reg`. Standard float division.
+
+**Logical & Bitwise Operations:** (Operate on registers as integers)
+
+*   `OP_AND` (4 slots: `OP_AND, dest_reg, src1_reg, src2_reg`)
+    *   **Action:** `dest_reg = (src1_reg != 0) && (src2_reg != 0) ? 1 : 0`. Performs logical AND.
+*   `OP_OR` (4 slots: `OP_OR, dest_reg, src1_reg, src2_reg`)
+    *   **Action:** `dest_reg = (src1_reg != 0) || (src2_reg != 0) ? 1 : 0`. Performs logical OR.
+*   `OP_NOT` (3 slots: `OP_NOT, dest_reg, src_reg`)
+    *   **Action:** `dest_reg = (src_reg == 0) ? 1 : 0`. Performs logical NOT.
+*   `OP_XOR` (4 slots: `OP_XOR, dest_reg, src1_reg, src2_reg`)
+    *   **Action:** `dest_reg = src1_reg ^ src2_reg`. Performs bitwise XOR.
+*   `OP_POP_REG` (2 slots: `OP_POP_REG, register_to_clear`)
+    *   **Action:** Sets the value in `register_to_clear` to integer 0. Useful for resetting flags or values.
+
+**Comparison Operations:** (Result is 1 for true, 0 for false, stored in `dest_reg` as an integer)
+
+*   *Integer Comparisons:*
+    *   `OP_EQ_INT` (4 slots): Equal (`==`)
+    *   `OP_NEQ_INT` (4 slots): Not Equal (`!=`)
+    *   `OP_GT_INT` (4 slots): Greater Than (`>`)
+    *   `OP_LT_INT` (4 slots): Less Than (`<`)
+    *   `OP_GTE_INT` (4 slots): Greater Than or Equal (`>=`)
+    *   `OP_LTE_INT` (4 slots): Less Than or Equal (`<=`)
+    *   *Arguments:* `OP_CODE, dest_reg, src1_reg, src2_reg`
+*   *Floating-Point Comparisons:*
+    *   `OP_EQ_FLOAT` (4 slots): Equal (`==`)
+    *   `OP_NEQ_FLOAT` (4 slots): Not Equal (`!=`)
+    *   `OP_GT_FLOAT` (4 slots): Greater Than (`>`)
+    *   `OP_LT_FLOAT` (4 slots): Less Than (`<`)
+    *   `OP_GTE_FLOAT` (4 slots): Greater Than or Equal (`>=`)
+    *   `OP_LTE_FLOAT` (4 slots): Less Than or Equal (`<=`)
+    *   *Arguments:* `OP_CODE, dest_reg, src1_reg, src2_reg`
+
+**Output:**
+
+*   `OP_OUTPUT_INT` (3 slots: `OP_OUTPUT_INT, source_register, output_id`)
+    *   **Action:** Sends the integer value from `source_register` to the output buffer, tagging it with the integer `output_id`. The host program will collect these later.
+*   `OP_OUTPUT_FLOAT` (3 slots: `OP_OUTPUT_FLOAT, source_register, output_id`)
+    *   **Action:** Sends the float value from `source_register` to the output buffer, tagging it with `output_id`. **Convention:** Often, float output IDs are set high (e.g., >= 10000) to distinguish them from integer outputs, but this isn't strictly enforced by the VM itself.
+
+**List Operations (Dynamic Float Lists!):**
+
+*   **Key Concept:** List operations work with *list IDs*. Critically, you don't specify the list ID directly in the instruction! Instead, you put the desired list ID (0 to `MAX_LISTS - 1`, which is 127) into a register, and then tell the instruction *which register holds the ID*.
+*   `OP_FLOAT_LIST` (2 slots: `OP_FLOAT_LIST, list_id_register`)
+    *   **Action:** Declares that the list ID currently stored in `list_id_register` is now valid and ready to be used. You *must* call this for a list ID before using other list operations on it (unless it was pre-loaded by `OP_LOAD_LNST`).
+*   `OP_ADD_LIST_ITEM` (3 slots: `OP_ADD_LIST_ITEM, list_id_register, value_register`)
+    *   **Action:** Appends the floating-point value from `value_register` to the *end* of the list whose ID is in `list_id_register`. Fails silently if the list is full (`MAX_LIST_SIZE`, which is 1024) or the list ID is invalid/undeclared.
+*   `OP_READ_LIST_ITEM` (4 slots: `OP_READ_LIST_ITEM, dest_register, list_id_register, index_register`)
+    *   **Action:** Reads the float value from the list (whose ID is in `list_id_register`) at the position specified by the integer in `index_register`. The value is stored in `dest_register`. If the index is out of bounds or the list is invalid, `dest_register` gets `0.0f`. Remember, list indices are 0-based!
+*   `OP_REMOVE_LIST_ITEM` (3 slots: `OP_REMOVE_LIST_ITEM, list_id_register, index_register`)
+    *   **Action:** Removes the item at the position specified by the integer in `index_register` from the list whose ID is in `list_id_register`. It does this efficiently by swapping the item with the *last* item in the list and then shrinking the list size. Fails silently if the index is invalid or the list is empty/invalid.
+*   `OP_EDIT_LIST_ITEM` (4 slots: `OP_EDIT_LIST_ITEM, list_id_register, index_register, value_register`)
+    *   **Action:** Overwrites the float value in the list (ID in `list_id_register`) at the position specified by the integer in `index_register` with the new float value from `value_register`. Fails silently if the index is out of bounds or the list is invalid.
+*   `OP_OUTPUT_LIST` (3 slots: `OP_OUTPUT_LIST, list_id_register, user_output_id`)
+    *   **Action:** Tells the host program to read the *entire* contents of the list whose ID is currently in `list_id_register`. The host will output this list associated with the `user_output_id` you provide. This sends special markers to the output buffer for the host to interpret.
+
+**File Input & Utility (v1.3+):**
+
+*   `OP_LOAD_LNST` (3 slots: `OP_LOAD_LNST, load_id, dest_list_id_or_reg`)
+    *   **Action (Host Pre-Execution):** THIS IS SPECIAL! The *host* program looks for these *before* running the code on the GPU. It reads the `load_id` (operand 1) and the `dest_list_id` (operand 2, interpreted *directly* as the list ID to write to). It then looks for `load_id:` in the `gpuIn.bin` file, parses the float list `[...]` found there, and *pre-loads* it into the specified `dest_list_id` on the GPU. It also marks that list ID as existing.
+    *   **Action (GPU Execution):** Does nothing (NOP). It's already been handled!
+*   `OP_RAND_M` (2 slots: `OP_RAND_M, dest_register_float`)
+    *   **Action:** Generates a pseudo-random floating-point number between 0.0 and 1.0 (inclusive) and stores it in `dest_register_float`. Each execution context (just the main one now) has its own internal random seed.
+*   `OP_ROUND` (3 slots: `OP_ROUND, dest_register_int, source_register_float`)
+    *   **Action:** Takes the float value from `source_register_float`, rounds it to the nearest whole number (0.5 rounds up towards positive infinity), and stores the result as an integer in `dest_register_int`.
+
+---
+
+## 💾 Working with Lists: Your Dynamic Data Holders
+
+Lists are powerful! Remember these key points:
+
+*   **Floats Only:** They store sequences of floating-point numbers.
+*   **Dynamic Size:** They grow when you add items (`OP_ADD_LIST_ITEM`) and shrink when you remove them (`OP_REMOVE_LIST_ITEM`), up to `MAX_LIST_SIZE` (1024).
+*   **Identified by Register:** You tell list opcodes *which register* holds the ID (0-127) of the list you want to work with.
+*   **Initialization:** Lists must be initialized either by `OP_FLOAT_LIST` before use on the GPU, or pre-loaded by the host using `OP_LOAD_LNST`.
+*   **GPU Magic:** Adding/removing items uses atomic operations on the GPU to avoid race conditions if you ever have multiple threads (though in pre-1.3.5, it's mainly single-threaded execution via `CALL`).
+*   **Indices:** List items are accessed by a 0-based index (0 is the first item, 1 is the second, and so on).
+
+---
+
+## 📤📥 Input & Output: Talking to the Outside World
+
+TCSCL interacts with the host system primarily through two files:
+
+*   **`gpuIn.bin` (Input):**
+    *   Used *only* by the host during the pre-execution phase for `OP_LOAD_LNST`.
+    *   It's a text file you create.
+    *   Format: Each line defines a list to be loaded.
+        ```
+        # Comments start with #
+        load_id: [float1, float2, float3, ...]
+        # Example:
+        5: [10.1, 20.2, 30.3]
+        12: [1.0, 2.0]
+        7: [] # An empty list
+        ```
+    *   The `load_id` corresponds to the first argument of `OP_LOAD_LNST`. The list contents will be loaded into the GPU list ID specified by the second argument of `OP_LOAD_LNST`.
+*   **`gpuOut.bin` (Output):**
+    *   This file is *created* by the host program after the GPU kernel finishes.
+    *   It contains the results from `OP_OUTPUT_INT`, `OP_OUTPUT_FLOAT`, and `OP_OUTPUT_LIST`.
+    *   Format: Text file, with each line representing an output ID and its value(s).
+        ```
+        output_id: value1[, value2, ...]
+        # Example Output:
+        100: 123 # From OP_OUTPUT_INT, reg, 100
+        10000: 3.141590 # From OP_OUTPUT_FLOAT, reg, 10000
+        50: [10.1, 20.2, 30.3] # From OP_OUTPUT_LIST, list_id_reg, 50
+        100: 456 # Another output with ID 100
+        ```
+    *   Outputs with the same ID might appear grouped or on separate lines depending on host processing, but often they are grouped like the second `100` example. List output (`OP_OUTPUT_LIST`) results in the list content being formatted nicely as `[item1, item2, ...]`.
+
+---
+
+## ⚙️ Behind the Scenes: Host & GPU Teamwork
+
+When you run your TCSCL code using the C++ host program:
+
+1.  **Host Pass 1 (Scanning):** The C++ code first reads your raw `.tcscl` instructions. It finds all `OP_LABEL` and `OP_FUNC_DEF` markers and remembers the Program Counter (PC) location where the code *after* them starts. It also checks if any `OP_LOAD_LNST` instructions exist.
+2.  **Host Pass 1.5 (Loading `gpuIn.bin`):** If `OP_LOAD_LNST` was found, the host parses `gpuIn.bin`.
+3.  **Host Pass 2 (Resolving Jumps):** The host goes through the instructions again. It replaces the `label_id` in `OP_JUMP` and `OP_JUMP_IF_ZERO` instructions with the actual *offset* (distance) the PC needs to jump.
+4.  **Host Pass 2.5 (Pre-Executing `OP_LOAD_LNST`):** The host finds all `OP_LOAD_LNST` instructions. For each one, it takes the `load_id`, finds the corresponding data in the parsed `gpuIn.bin` map, takes the `dest_list_id`, and directly writes that data and size into the GPU's list buffers *before* the main kernel starts.
+5.  **GPU Execution:** The host copies the processed program, the function lookup table, and the pre-loaded list data to the GPU's memory. It then launches a *single* GPU kernel thread.
+6.  **VM Kernel:** This kernel starts executing your instructions from PC 0 (the beginning of the `// PROGRAM` section). It uses the pre-calculated jump offsets and function PCs. `OP_CALL` pushes the return address onto a stack and jumps; `OP_RET` pops the address and jumps back. List operations manipulate the shared list buffers using safe atomic operations. Outputs are written to shared output buffers.
+7.  **Host Reads Output:** Once the GPU kernel hits `OP_HALT` or finishes, the host reads the output buffers (including any list data requested by `OP_OUTPUT_LIST`) and writes everything neatly into `gpuOut.bin`.
+
+---
+
+## 🧩 Example Explained!
+
+Let's look at that `.tcscl` example again:
+
+```tcscl
+// CONSTANTS (DECO)
+const int RAND_UNIFORM = 1; // Function ID 1
+const int RAND_OUTPUT = 1;  // Register ID 1
+// ]
+
+// REGISTERS [
+OP_LOAD_FLOAT, RAND_OUTPUT, float_as_int(0.0f), // Put 0.0f into Register 1 initially
+// ]
+
+// PROGRAM
+OP_CALL, RAND_UNIFORM, // Call function 1
+
+// (After returning from the function, Register 1 holds a random float)
+OP_OUTPUT_FLOAT, RAND_OUTPUT, 10001, // Output value in Reg 1 with ID 10001
+
+OP_HALT, // Stop!
+// ]
+
+// FUNCTION DEFINITIONS
+OP_FUNC_DEF, RAND_UNIFORM, // Define function 1
+    OP_RAND_M, RAND_OUTPUT, // Put a random float (0-1) into Register 1
+OP_RET, // Return from function
+// ]
+```
+
+**How it runs:**
+
+1.  **Host:** Defines constants, sees `OP_LOAD_FLOAT` for initial register setup. Finds `OP_FUNC_DEF` for function 1 and notes its start PC. Sees no jumps or `OP_LOAD_LNST`.
+2.  **Host -> GPU:** Sends program, function table, and initial register value (0.0 in Reg 1) to GPU.
+3.  **GPU Kernel Starts (PC=0):**
+    *   `OP_CALL, 1`: Pushes return address (PC after this instruction) onto the call stack. Jumps to the PC associated with function ID 1.
+    *   *(Inside Function 1)* `OP_RAND_M, 1`: Generates a random float (e.g., 0.789) and stores it in Register 1.
+    *   *(Inside Function 1)* `OP_RET`: Pops the return address from the stack. Jumps back to the instruction after `OP_CALL`.
+    *   `OP_OUTPUT_FLOAT, 1, 10001`: Reads the value from Register 1 (e.g., 0.789) and sends it to the output buffer with ID 10001.
+    *   `OP_HALT`: Kernel stops.
+4.  **Host Reads Output:** Host reads the output buffer, finds ID 10001 with value 0.789.
+5.  **Host Writes `gpuOut.bin`:** Creates `gpuOut.bin` with content like: `10001: 0.789000`
+
+Pretty neat, huh?
+
+---
+
+##💡 Tips for Happy TCSCL Coding! 💡
+
+*   **Use Constants!** Define names for registers, function IDs, list IDs, and even magic numbers using `const int NAME = value;`. It makes your code *so* much easier to read and modify.
+*   **Comment Generously:** Use `//` to explain *why* you are doing something, not just *what* the instruction does (the opcode name often tells you that). Explain your logic!
+*   **Plan Your Registers:** With 4096 registers, you have plenty, but try to group related data or assign specific roles to certain registers (e.g., R0-R9 for temporary calculations, R100+ for persistent state).
+*   **Initialize Lists:** Remember to use `OP_FLOAT_LIST` or rely on `OP_LOAD_LNST` before manipulating a list ID.
+*   **Handle Float Bits:** Use `float_as_int()` helper (or calculate the bits) when using `OP_LOAD_FLOAT`.
+*   **Think Sequentially (Mostly):** Execution flows top-down unless you use jumps or calls. Keep conditional blocks (`IF`/`ELSE`) balanced with `ENDIF`.
+*   **End with `OP_HALT`:** Make sure your main program flow eventually reaches an `OP_HALT`.
+
+---
+
+## ⚠️ Important Limits & Quirks (pre-1.3.5) ⚠️
+
+*   `REGISTER_COUNT`: 4096 (0-4095)
+*   `STACK_DEPTH`: 256 (limits nested `OP_CALL`s)
+*   `MAX_OUTPUTS`: 4096 entries in the output buffer. `OP_OUTPUT_LIST` uses 2 slots per call.
+*   `MAX_FUNCTIONS`: 512 (Function IDs 0-511)
+*   `MAX_LISTS`: 128 (List IDs 0-127)
+*   `MAX_LIST_SIZE`: 1024 float items per list.
+*   **Single Main Thread:** Execution starts with one thread. `OP_CALL` happens within that thread. (No automatic parallel function execution like in older versions).
+*   **Error Handling:** Many operations fail silently on the GPU (e.g., list index out of bounds, division by zero). Code defensively! Use comparisons (`OP_LT_INT`, etc.) to check list indices or divisors if needed.
+*   `OP_LOAD_LNST` is **Host-Only Pre-processing**. It's a NOP on the GPU itself.
+
+---
+
+## 🎉 Conclusion 🎉
+
+You've made it! That's the grand tour of TCSCL pre-1.3.5. It's a unique way to tap into your GPU's power for general-purpose tasks defined by *your* instructions. It requires careful planning, especially with register usage and list management, but gives you direct control.
+
+Go forth, experiment, build amazing things, and have fun commanding your own little GPU virtual machine! Happy coding! ✨
 *   **Be Careful with Types:** Use `_INT` opcodes for integers and `_FLOAT` opcodes for floats. Remember `float_as_int()` for loading literal floats.
 *   **Plan Register Use:** Think about which registers will hold inputs, intermediate values, and outputs, especially for functions.
 *   **Test Incrementally:** Build your program piece by piece and test it.
